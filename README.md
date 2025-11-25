@@ -184,7 +184,6 @@ On your PS5:
 
 1. Go to Settings → Network → Settings → Set Up Internet Connection.
 
-
 2.Scroll to the bottom and select Set Up Manually.
 
 3. Choose Connection Type **Use Wi-Fi** or **Use a LAN Cable**
@@ -199,10 +198,10 @@ Choose **Enter Manually**, Enter your SSID **Wi-Fi network name**. Set **Securit
 
 - Port: 8080
 
-5. Press Done and wait for the connection to establish
+6. Press Done and wait for the connection to establish
 - You may see **Can't connect to the internet** — this is expected and can be ignored after pressing OK.
 
-6. Edit inject.js and inject_elfldr_automated.js:
+7. Edit inject.js and inject_elfldr_automated.js:
 
 ```
 const ip_script = "10.0.0.2"; // IP address of computer running mitmproxy.
