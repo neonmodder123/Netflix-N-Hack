@@ -184,7 +184,7 @@ On your PS5:
 
 1. Go to Settings > Network > Settings > Set Up Internet Connection.  
 
-2.Scroll to the bottom and select Set Up Manually.  
+2. Scroll to the bottom and select Set Up Manually.  
 
 3. Choose Connection Type **Use Wi-Fi** or **Use a LAN Cable**
 If using **Wi-Fi**:
