@@ -1,7 +1,7 @@
 # Netflix N Hack for PS4 (coming soon)
 
 > [!NOTE]
-> PS4 version requires very specific circumstances to work. We have a few workaround described below.
+> PS4 version requires very specific circumstances to work. We have a few workarounds described below.
 
 ## Compatibility 
 
