@@ -8,7 +8,7 @@
 Before proceeding, ensure the following:
 
 1. **Netflix (with license) installed on your PS4 below the latest version**
-    - If you have an existing jailbreak, simply install the vulnerable version.
+    - If you have an existing jailbreak, simply install the vulnerable version for your region [EU](https://orbispatches.com/CUSA00127?v=01.53)  [US](https://orbispatches.com/CUSA00129?v=01.53) [JP](https://orbispatches.com/CUSA02988?v=01.53)
     - This is useful if you can’t afford BD-JB or are stuck using PPPwn.
     - If you are on the latest firmware, you *can* downgrade Netflix via MITM by downloading from PSN.  
       You **cannot jailbreak**, but you will be prepared if a new kernel exploit releases.
