@@ -24,6 +24,9 @@ Before proceeding, ensure the following:
 - mitmproxy
 - Internet access
 
+> [!NOTE]
+> it is recommended that you backup you system before continuing in case you lose your Netflix version [Click here for more information](https://www.playstation.com/en-us/support/hardware/ps4-back-up-and-restore-with-external-storage/)
+
 ### Install & Run Downgrade Proxy
 ```bash
 # Install mitmproxy
