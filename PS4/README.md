@@ -27,7 +27,7 @@ Before proceeding, ensure the following:
 - Internet access
 
 > [!NOTE]
-> it is recommended that you backup your system before continuing in case you lose your Netflix version [Click here for more information](https://www.playstation.com/en-us/support/hardware/ps4-back-up-and-restore-with-external-storage/)
+> please make sure you do this correctly. Backup restore will not backup licenses. Downgrade at your own risk!
 
 ### Install & Run Downgrade Proxy
 ```bash
