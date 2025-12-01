@@ -260,7 +260,11 @@ class gadgets {
                     this.pop_rsp_pop_rbp = 0x17ecb4en;
                     this.mov_qword_ptr_rdi_rax = 0x1dcba9n;
                     break;
+<<<<<<< HEAD
                 case 'Pollux-U53-7-J':    
+=======
+                case 'Pollux-U53-7-J':        // PS4 JP 1.53
+>>>>>>> d793e0c8d4ed216ed9200696e6a2530460f65197
                 case 'Pollux-U53-7-E':        // PS4 EU 1.53
                     is_ps4 = true;
                     /** Gadgets for Function Arguments (EBOOT) **/
@@ -287,6 +291,8 @@ class gadgets {
                         
                 
                     break;
+
+                
                     
                 case 'Pollux-U53-7-A':        // PS4 US 1.53
                     is_ps4 = true;
@@ -1544,6 +1550,12 @@ function main () {
         logger.flush();
     }
 }
+<<<<<<< HEAD
     ws.init("192.168.0.111", 1337, main);// uncomment this to enable WebSocket logging
 //main();
 
+=======
+
+//ws.init("192.168.0.111", 1337, main);// uncomment this to enable WebSocket logging
+main();
+>>>>>>> d793e0c8d4ed216ed9200696e6a2530460f65197

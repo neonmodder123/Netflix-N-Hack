@@ -1,4 +1,6 @@
-# Netflix N Hack for PS4 (coming soon)
+# Netflix N Hack for PS4
+
+## **Currently only userland+lapse exploit. Binloader is WIP**
 
 > [!NOTE]
 > The PS4 version requires very specific circumstances to work. Workarounds are included below.
@@ -13,7 +15,7 @@ Before proceeding, ensure the following:
     - If you are on the latest firmware, you *can* downgrade Netflix via MITM by downloading from PSN.  
       You **cannot jailbreak**, but you will be prepared if a new kernel exploit releases.
 
-2. **PS4 Firmware version must be between 9.00 and 12.02** (required for the Lapse exploit)
+2. **PS4 Firmware version must be between 8.00 and 12.02** (required for the Lapse exploit)
 
 ---
 
@@ -25,7 +27,7 @@ Before proceeding, ensure the following:
 - Internet access
 
 > [!NOTE]
-> it is recommended that you backup your system before continuing in case you lose your Netflix version [Click here for more information](https://www.playstation.com/en-us/support/hardware/ps4-back-up-and-restore-with-external-storage/)
+> please make sure you do this correctly. Backup restore will not backup licenses. Downgrade at your own risk!
 
 ### Install & Run Downgrade Proxy
 ```bash

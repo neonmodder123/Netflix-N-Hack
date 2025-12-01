@@ -15,7 +15,7 @@ var helloWidget = nrdp.gibbon.makeWidget({
 });
 
 helloWidget.text = {
-    contents: "HELLO ABBY!",
+    contents: "HELLO WORLD!",
     size: 72,
     color: { a: 255, r: 255, g: 0, b: 0 }, // Cyan
     wrap: false
@@ -24,7 +24,7 @@ helloWidget.text = {
 helloWidget.parent = logger.overlay;
 
 // Send notification
-send_notification("Hello Abby! 🎬");
+send_notification("Hello NETFLIX! 🎬");
 
 // Log success
 logger.log("Payload executed!");
