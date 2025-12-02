@@ -1544,6 +1544,6 @@ function main () {
         logger.flush();
     }
 }
-    ws.init("192.168.0.111", 1337, main);// uncomment this to enable WebSocket logging
-//main();
+    //ws.init("192.168.0.111", 1337, main);// uncomment this to enable WebSocket logging
+main();
 
