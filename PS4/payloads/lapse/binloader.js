@@ -1,73 +1,382 @@
-/*
-    PS4 BinLoader - ELF/Binary Loader
+// bin_loader_ps4.js - ELF/binary loader for PS4 after jailbreak
+// Port of bin_loader.py from yarpe
+// Loads and executes ELF binaries sent over socket after jailbreak is complete
 
-    After jailbreak, starts a TCP server on port 9021.
-    Send an ELF binary to load and execute it.
-
-    Requires: lapse_stages.js (Stage 2-4 functions)
-*/
-
-// === BinLoader Constants ===
+// Constants
 const BIN_LOADER_PORT = 9021;
-const MAX_PAYLOAD_SIZE = 4 * 1024 * 1024;  // 4MB
+const MAX_PAYLOAD_SIZE = 4 * 1024 * 1024;  // 4MB max
 const READ_CHUNK = 4096;
-const ELF_MAGIC = 0x464C457Fn;  // "\x7fELF" as little-endian
 
+// Thrd_create offset in libc.prx (verified via Ghidra)
+const THRD_CREATE_OFFSET = 0x4c770n;
+
+// ELF magic bytes
+const ELF_MAGIC = 0x464C457F;  // "\x7fELF" as little-endian uint32
+
+// mmap constants
 const BL_MAP_PRIVATE = 0x2n;
 const BL_MAP_ANONYMOUS = 0x1000n;
 const BL_PROT_READ = 0x1n;
 const BL_PROT_WRITE = 0x2n;
 const BL_PROT_EXEC = 0x4n;
 
-// Syscalls not in inject.js SYSCALL object
-const BL_SYSCALL_MMAP = 477;    // 0x1DD
-const BL_SYSCALL_GETPID = 20;   // 0x14
+// Socket constants
+const BL_AF_INET = 2n;
+const BL_SOCK_STREAM = 1n;
+const BL_SOL_SOCKET = 0xffffn;
+const BL_SO_REUSEADDR = 4n;
 
-// === BinLoader Functions ===
+// Syscall numbers (must match SYSCALL in lapse_ps4.js)
+const BL_SYSCALL = {
+    read: 0x3,
+    write: 0x4,
+    close: 0x6,
+    socket: 0x61,
+    bind: 0x68,
+    listen: 0x6a,
+    accept: 0x1e,
+    getsockname: 0x20,
+    setsockopt: 0x69,
+    mmap: 0x1dd,      // 477
+    munmap: 0x49,
+    getuid: 0x18,
+    getpid: 0x14,
+    kill: 0x25,
+    nanosleep: 0xf0,
+    is_in_sandbox: 0x249,
+};
 
+// Note: When integrated into lapse_ps4.js, use SYSCALL instead of BL_SYSCALL
+
+// ELF header structure offsets
+const ELF_HEADER = {
+    E_ENTRY: 0x18,
+    E_PHOFF: 0x20,
+    E_PHENTSIZE: 0x36,
+    E_PHNUM: 0x38,
+};
+
+// Program header structure offsets
+const PROGRAM_HEADER = {
+    P_TYPE: 0x00,
+    P_FLAGS: 0x04,
+    P_OFFSET: 0x08,
+    P_VADDR: 0x10,
+    P_FILESZ: 0x20,
+    P_MEMSZ: 0x28,
+};
+
+const PT_LOAD = 1;
+
+// Helper: Check if we're jailbroken
+function bl_is_jailbroken() {
+    const uid = syscall(BigInt(BL_SYSCALL.getuid));
+    const sandbox = syscall(BigInt(BL_SYSCALL.is_in_sandbox));
+    return uid === 0n && sandbox === 0n;
+}
+
+// Helper: Round up to page boundary
+function bl_round_up(x, base) {
+    return Math.floor((x + base - 1) / base) * base;
+}
+
+// Helper: Check for syscall error
+function bl_is_error(val) {
+    if (typeof val === 'bigint') {
+        return val === 0xffffffffffffffffn || val >= 0xffffffff00000000n;
+    }
+    return val === -1 || val === 0xffffffff;
+}
+
+// Read ELF header from buffer
+function bl_read_elf_header(buf_addr) {
+    return {
+        magic: Number(read32_uncompressed(buf_addr)),
+        e_entry: read64_uncompressed(buf_addr + BigInt(ELF_HEADER.E_ENTRY)),
+        e_phoff: read64_uncompressed(buf_addr + BigInt(ELF_HEADER.E_PHOFF)),
+        e_phentsize: Number(read16_uncompressed(buf_addr + BigInt(ELF_HEADER.E_PHENTSIZE))),
+        e_phnum: Number(read16_uncompressed(buf_addr + BigInt(ELF_HEADER.E_PHNUM))),
+    };
+}
+
+// Read program header from buffer
+function bl_read_program_header(buf_addr, offset) {
+    const base = buf_addr + BigInt(offset);
+    return {
+        p_type: Number(read32_uncompressed(base + BigInt(PROGRAM_HEADER.P_TYPE))),
+        p_flags: Number(read32_uncompressed(base + BigInt(PROGRAM_HEADER.P_FLAGS))),
+        p_offset: read64_uncompressed(base + BigInt(PROGRAM_HEADER.P_OFFSET)),
+        p_vaddr: read64_uncompressed(base + BigInt(PROGRAM_HEADER.P_VADDR)),
+        p_filesz: read64_uncompressed(base + BigInt(PROGRAM_HEADER.P_FILESZ)),
+        p_memsz: read64_uncompressed(base + BigInt(PROGRAM_HEADER.P_MEMSZ)),
+    };
+}
+
+// Load ELF segments into mmap'd memory
+function bl_load_elf_segments(buf_addr, base_addr) {
+    const elf = bl_read_elf_header(buf_addr);
+
+    logger.log("ELF entry: " + hex(elf.e_entry));
+    logger.log("Program headers: " + elf.e_phnum + " @ offset " + hex(elf.e_phoff));
+
+    for (let i = 0; i < elf.e_phnum; i++) {
+        const phdr_offset = Number(elf.e_phoff) + i * elf.e_phentsize;
+        const segment = bl_read_program_header(buf_addr, phdr_offset);
+
+        if (segment.p_type === PT_LOAD && segment.p_memsz > 0n) {
+            // Use lower 24 bits of vaddr to get offset within region
+            const seg_offset = segment.p_vaddr & 0xffffffn;
+            const seg_addr = base_addr + seg_offset;
+
+            logger.log("Loading segment " + i + ":");
+            logger.log("  vaddr: " + hex(segment.p_vaddr));
+            logger.log("  filesz: " + hex(segment.p_filesz));
+            logger.log("  -> " + hex(seg_addr));
+
+            // Copy segment data
+            const filesz = Number(segment.p_filesz);
+            const src_addr = buf_addr + segment.p_offset;
+
+            for (let j = 0; j < filesz; j++) {
+                const byte = read8_uncompressed(src_addr + BigInt(j));
+                write8_uncompressed(seg_addr + BigInt(j), byte);
+            }
+
+            // Zero remaining memory (memsz - filesz)
+            const memsz = Number(segment.p_memsz);
+            for (let j = filesz; j < memsz; j++) {
+                write8_uncompressed(seg_addr + BigInt(j), 0);
+            }
+        }
+    }
+
+    // Return entry point address
+    const entry_offset = elf.e_entry & 0xffffffn;
+    return base_addr + entry_offset;
+}
+
+// BinLoader object
+const BinLoader = {
+    data: null,
+    data_size: 0,
+    mmap_base: 0n,
+    mmap_size: 0,
+    entry_point: 0n,
+};
+
+BinLoader.init = function(bin_data_addr, bin_size) {
+    BinLoader.data = bin_data_addr;
+    BinLoader.data_size = bin_size;
+
+    // Calculate mmap size (round up to page boundary)
+    BinLoader.mmap_size = bl_round_up(bin_size, PAGE_SIZE);
+
+    // Allocate RWX memory
+    const prot = BL_PROT_READ | BL_PROT_WRITE | BL_PROT_EXEC;
+    const flags = BL_MAP_PRIVATE | BL_MAP_ANONYMOUS;
+
+    const ret = syscall(
+        BigInt(BL_SYSCALL.mmap),
+        0n,
+        BigInt(BinLoader.mmap_size),
+        prot,
+        flags,
+        0xffffffffffffffffn,  // fd = -1
+        0n
+    );
+
+    if (ret >= 0xffff800000000000n) {
+        throw new Error("mmap failed: " + hex(ret));
+    }
+
+    BinLoader.mmap_base = ret;
+    logger.log("mmap() allocated at: " + hex(BinLoader.mmap_base));
+
+    // Check for ELF magic
+    const magic = Number(read32_uncompressed(bin_data_addr));
+
+    if (magic === ELF_MAGIC) {
+        logger.log("Detected ELF binary, parsing headers...");
+        BinLoader.entry_point = bl_load_elf_segments(bin_data_addr, BinLoader.mmap_base);
+    } else {
+        logger.log("Non-ELF binary, treating as raw shellcode");
+        for (let i = 0; i < bin_size; i++) {
+            const byte = read8_uncompressed(bin_data_addr + BigInt(i));
+            write8_uncompressed(BinLoader.mmap_base + BigInt(i), byte);
+        }
+        BinLoader.entry_point = BinLoader.mmap_base;
+    }
+
+    logger.log("Entry point: " + hex(BinLoader.entry_point));
+};
+
+// Spawn payload thread and kill process using ROP
+function spawn_payload_thread_and_wait(entry_point, args) {
+    // Get Thrd_create address from libc
+    const Thrd_create = libc_base + THRD_CREATE_OFFSET;
+    logger.log("libc_base @ " + hex(libc_base));
+    logger.log("Thrd_create @ " + hex(Thrd_create));
+
+    // Get our PID for SIGKILL
+    const pid = syscall(BigInt(BL_SYSCALL.getpid));
+    logger.log("Our PID: " + pid);
+
+    // Allocate structures
+    const thr_handle_addr = malloc(8);
+    const timespec_addr = malloc(16);
+
+    // Setup timespec for nanosleep: 0.5 second delay to let thread start
+    write64_uncompressed(timespec_addr, 0n);           // tv_sec = 0
+    write64_uncompressed(timespec_addr + 8n, 500000000n);  // tv_nsec = 500ms
+
+    // Build args structure for the payload
+    const rwpipe = malloc(8);
+    const rwpair = malloc(8);
+
+    write32_uncompressed(rwpipe, ipv6_kernel_rw.data.pipe_read_fd);
+    write32_uncompressed(rwpipe + 0x4n, ipv6_kernel_rw.data.pipe_write_fd);
+
+    write32_uncompressed(rwpair, Number(ipv6_kernel_rw.data.master_sock));
+    write32_uncompressed(rwpair + 0x4n, Number(ipv6_kernel_rw.data.victim_sock));
+
+    // Args structure for payload:
+    // arg1 = syscall_wrapper
+    // arg2 = rwpipe (pipe fds)
+    // arg3 = rwpair (socket fds)
+    // arg4 = pipe kernel addr
+    // arg5 = kernel data base
+    // arg6 = output ptr
+    const payloadout = malloc(4);
+    write64_uncompressed(args + 0x00n, syscall_wrapper - 0x7n);
+    write64_uncompressed(args + 0x08n, rwpipe);
+    write64_uncompressed(args + 0x10n, rwpair);
+    write64_uncompressed(args + 0x18n, ipv6_kernel_rw.data.pipe_addr);
+    write64_uncompressed(args + 0x20n, kernel.addr.base);
+    write64_uncompressed(args + 0x28n, payloadout);
+
+    // Note: Exploit cleanup (sds, sds_alt, block_fd, etc.) is done in lapse.js
+    // We keep the kernel r/w sockets/pipes open since payload may need them
+
+    // Set up ROP chain
+    write64(add_rop_smash_code_store, 0xab0025n);
+    real_rbp = addrof(rop_smash(1)) + 0x700000000n + 1n;
+
+    let i = 0;
+
+    // =====================================================
+    // Part 1: Thrd_create(thr_handle_addr, entry_point, args)
+    // =====================================================
+    fake_rop[i++] = eboot_base + g.pop_rdi;
+    fake_rop[i++] = thr_handle_addr;
+    fake_rop[i++] = eboot_base + g.pop_rsi;
+    fake_rop[i++] = entry_point;
+    fake_rop[i++] = eboot_base + g.pop_rdx;
+    fake_rop[i++] = args;
+    fake_rop[i++] = eboot_base + g.pop_rcx;
+    fake_rop[i++] = 0n;
+    fake_rop[i++] = eboot_base + g.pop_r8;
+    fake_rop[i++] = 0n;
+    fake_rop[i++] = eboot_base + g.pop_r9;
+    fake_rop[i++] = 0n;
+    fake_rop[i++] = Thrd_create;
+
+    // =====================================================
+    // Part 2: nanosleep to let thread initialize
+    // =====================================================
+    fake_rop[i++] = eboot_base + g.pop_rdi;
+    fake_rop[i++] = timespec_addr;
+    fake_rop[i++] = eboot_base + g.pop_rsi;
+    fake_rop[i++] = 0n;
+    fake_rop[i++] = eboot_base + g.pop_rax;
+    fake_rop[i++] = BigInt(BL_SYSCALL.nanosleep);
+    fake_rop[i++] = syscall_wrapper;
+
+    // =====================================================
+    // Part 3: SIGKILL just our process (Netflix app)
+    // Don't use negative PID - that kills the whole process group including ShellUI!
+    // =====================================================
+    fake_rop[i++] = eboot_base + g.pop_rdi;
+    fake_rop[i++] = pid;  // Just our PID, not process group
+    fake_rop[i++] = eboot_base + g.pop_rsi;
+    fake_rop[i++] = 9n;  // SIGKILL
+    fake_rop[i++] = eboot_base + g.pop_rax;
+    fake_rop[i++] = BigInt(BL_SYSCALL.kill);
+    fake_rop[i++] = syscall_wrapper;
+
+    // Note: We won't reach here - SIGKILL terminates us
+    // The payload thread continues running independently
+
+    logger.log("ROP chain built");
+    logger.log("Triggering: Thrd_create -> nanosleep -> SIGKILL");
+
+    // Trigger the ROP chain
+    write64(add_rop_smash_code_store, 0xab00260325n);
+    fake_rw[59] = (fake_frame & 0xffffffffn);
+    rop_smash(fake_obj_arr[0]);
+
+    // We won't reach here
+    logger.log("ERROR: Should not reach here after SIGKILL");
+}
+
+BinLoader.run = function() {
+    logger.log("Spawning payload thread...");
+
+    const args = malloc(0x30);
+    spawn_payload_thread_and_wait(BinLoader.entry_point, args);
+};
+
+// Create listening socket
 function bl_create_listen_socket(port) {
-    const sd = syscall(SYSCALL.socket, AF_INET, SOCK_STREAM, 0n);
-    if (sd === 0xffffffffffffffffn) {
+    const sd = syscall(BigInt(BL_SYSCALL.socket), BL_AF_INET, BL_SOCK_STREAM, 0n);
+    if (bl_is_error(sd)) {
         throw new Error("socket() failed");
     }
 
+    // Set SO_REUSEADDR
     const enable = malloc(4);
     write32_uncompressed(enable, 1);
-    syscall(SYSCALL.setsockopt, sd, SOL_SOCKET, SO_REUSEADDR, enable, 4n);
+    syscall(BigInt(BL_SYSCALL.setsockopt), sd, BL_SOL_SOCKET, BL_SO_REUSEADDR, enable, 4n);
 
+    // Build sockaddr_in
     const sockaddr = malloc(16);
     for (let j = 0; j < 16; j++) {
         write8_uncompressed(sockaddr + BigInt(j), 0);
     }
-    write8_uncompressed(sockaddr + 1n, AF_INET);
-    write8_uncompressed(sockaddr + 2n, (port >> 8) & 0xff);
-    write8_uncompressed(sockaddr + 3n, port & 0xff);
+    write8_uncompressed(sockaddr + 1n, 2);  // AF_INET
+    write8_uncompressed(sockaddr + 2n, (port >> 8) & 0xff);  // port high byte
+    write8_uncompressed(sockaddr + 3n, port & 0xff);         // port low byte
     write32_uncompressed(sockaddr + 4n, 0);  // INADDR_ANY
 
-    let ret = syscall(SYSCALL.bind, sd, sockaddr, 16n);
-    if (ret === 0xffffffffffffffffn) {
-        syscall(SYSCALL.close, sd);
+    let ret = syscall(BigInt(BL_SYSCALL.bind), sd, sockaddr, 16n);
+    if (bl_is_error(ret)) {
+        syscall(BigInt(BL_SYSCALL.close), sd);
         throw new Error("bind() failed");
     }
 
-    ret = syscall(SYSCALL.listen, sd, 1n);
-    if (ret === 0xffffffffffffffffn) {
-        syscall(SYSCALL.close, sd);
+    ret = syscall(BigInt(BL_SYSCALL.listen), sd, 1n);
+    if (bl_is_error(ret)) {
+        syscall(BigInt(BL_SYSCALL.close), sd);
         throw new Error("listen() failed");
     }
 
     return sd;
 }
 
+// Read payload data from client socket
 function bl_read_payload_from_socket(client_sock, max_size) {
     const buf = malloc(READ_CHUNK);
     const payload_buf = malloc(max_size);
     let total_read = 0;
 
     while (total_read < max_size) {
-        const read_size = syscall(SYSCALL.read, client_sock, buf, BigInt(READ_CHUNK));
+        const read_size = syscall(
+            BigInt(BL_SYSCALL.read),
+            BigInt(client_sock),
+            buf,
+            BigInt(READ_CHUNK)
+        );
 
-        if (read_size === 0xffffffffffffffffn) {
+        if (bl_is_error(read_size)) {
             throw new Error("read() failed");
         }
 
@@ -86,111 +395,23 @@ function bl_read_payload_from_socket(client_sock, max_size) {
 
         if (total_read % (64 * 1024) === 0) {
             logger.log("Received " + total_read + " bytes...");
-            logger.flush();
         }
     }
 
     return { buf: payload_buf, size: total_read };
 }
 
-function bl_load_elf(buf_addr, buf_size) {
-    // Check ELF magic
-    const magic = read32_uncompressed(buf_addr);
-    logger.log("First 4 bytes (magic): " + hex(magic));
-    // Compare as numbers since ELF_MAGIC is a Number constant
-    if (Number(magic) !== ELF_MAGIC) {
-        logger.log("Not an ELF file, treating as raw shellcode");
-        return { is_elf: false };
-    }
-
-    // Read ELF header
-    const e_entry = read64_uncompressed(buf_addr + 0x18n);
-    const e_phoff = read64_uncompressed(buf_addr + 0x20n);
-    const e_phentsize = Number(read16_uncompressed(buf_addr + 0x36n));
-    const e_phnum = Number(read16_uncompressed(buf_addr + 0x38n));
-
-    logger.log("ELF entry: " + hex(e_entry));
-    logger.log("Program headers: " + e_phnum + " @ offset " + hex(e_phoff));
-
-    // Calculate total memory needed
-    let max_addr = 0n;
-    for (let i = 0; i < e_phnum; i++) {
-        const phdr_addr = buf_addr + e_phoff + BigInt(i * e_phentsize);
-        const p_type = Number(read32_uncompressed(phdr_addr));
-        if (p_type === 1) {  // PT_LOAD
-            const p_vaddr = read64_uncompressed(phdr_addr + 0x10n);
-            const p_memsz = read64_uncompressed(phdr_addr + 0x28n);
-            const end = (p_vaddr & 0xffffffn) + p_memsz;
-            if (end > max_addr) max_addr = end;
-        }
-    }
-
-    return {
-        is_elf: true,
-        e_entry: e_entry,
-        e_phoff: e_phoff,
-        e_phentsize: e_phentsize,
-        e_phnum: e_phnum,
-        total_size: Number(max_addr)
-    };
-}
-
-function bl_mmap_rwx(size) {
-    // After kernel patches, regular mmap with PROT_RWX should work
-    // The kpatches modify sys_mmap() to allow RWX mappings
-    const prot = BL_PROT_READ | BL_PROT_WRITE | BL_PROT_EXEC;
-    const flags = BL_MAP_PRIVATE | BL_MAP_ANONYMOUS;
-
-    const ret = syscall(BL_SYSCALL_MMAP, 0n, BigInt(size), prot, flags, 0xffffffffffffffffn, 0n);
-
-    logger.log("mmap(" + size + ") returned: " + hex(ret));
-
-    if (ret >= 0xffff800000000000n) {
-        throw new Error("mmap failed: " + hex(ret));
-    }
-
-    return ret;
-}
-
-function bl_load_segments(buf_addr, elf_info, mmap_base) {
-    for (let i = 0; i < elf_info.e_phnum; i++) {
-        const phdr_addr = buf_addr + elf_info.e_phoff + BigInt(i * elf_info.e_phentsize);
-        const p_type = Number(read32_uncompressed(phdr_addr));
-
-        if (p_type === 1) {  // PT_LOAD
-            const p_offset = read64_uncompressed(phdr_addr + 0x08n);
-            const p_vaddr = read64_uncompressed(phdr_addr + 0x10n);
-            const p_filesz = Number(read64_uncompressed(phdr_addr + 0x20n));
-            const p_memsz = Number(read64_uncompressed(phdr_addr + 0x28n));
-
-            const seg_offset = p_vaddr & 0xffffffn;
-            const seg_addr = mmap_base + seg_offset;
-
-            logger.log("Loading segment " + i + ": " + hex(p_vaddr) + " -> " + hex(seg_addr) + " (" + p_filesz + " bytes)");
-
-            // Copy segment data
-            for (let j = 0; j < p_filesz; j++) {
-                const byte = read8_uncompressed(buf_addr + p_offset + BigInt(j));
-                write8_uncompressed(seg_addr + BigInt(j), byte);
-            }
-
-            // Zero BSS (memsz - filesz)
-            for (let j = p_filesz; j < p_memsz; j++) {
-                write8_uncompressed(seg_addr + BigInt(j), 0);
-            }
-        }
-    }
-
-    // Return entry point
-    const entry_offset = elf_info.e_entry & 0xffffffn;
-    return mmap_base + entry_offset;
-}
-
+// Main bin_loader function
 function bin_loader_main() {
-    logger.log("");
     logger.log("=== PS4 Binary Loader ===");
-    logger.log("Starting payload server on port " + BIN_LOADER_PORT);
-    logger.flush();
+
+    if (!bl_is_jailbroken()) {
+        logger.log("ERROR: Console is not jailbroken");
+        send_notification("Jailbreak failed!\nNot jailbroken.");
+        return false;
+    }
+
+    logger.log("Console is jailbroken, starting payload server...");
 
     let server_sock;
     try {
@@ -201,138 +422,64 @@ function bin_loader_main() {
         return false;
     }
 
-    const ip = get_current_ip();
-    const addr_str = (ip ? ip : "<PS4 IP>") + ":" + BIN_LOADER_PORT;
+    // Get current IP and notify user
+    const current_ip = get_current_ip();
+    const network_str = (current_ip ? current_ip : "<PS4 IP>") + ":" + BIN_LOADER_PORT;
 
-    logger.log("Listening on " + addr_str);
-    logger.log("Send your ELF payload now...");
-    logger.flush();
-    send_notification("Jailbreak OK!\nSend ELF to:\n" + addr_str);
+    logger.log("Listening on " + network_str);
+    logger.log("Send your ELF payload to this address");
+    send_notification("Binloader listening on:\n" + network_str);
 
-    // Accept client
+    // Accept client connection
     const sockaddr = malloc(16);
     const sockaddr_len = malloc(4);
     write32_uncompressed(sockaddr_len, 16);
 
-    const client_sock = syscall(SYSCALL.accept, server_sock, sockaddr, sockaddr_len);
-    if (client_sock === 0xffffffffffffffffn) {
+    const client_sock = syscall(
+        BigInt(BL_SYSCALL.accept),
+        server_sock,
+        sockaddr,
+        sockaddr_len
+    );
+
+    if (bl_is_error(client_sock)) {
         logger.log("ERROR: accept() failed");
-        syscall(SYSCALL.close, server_sock);
+        syscall(BigInt(BL_SYSCALL.close), server_sock);
         return false;
     }
 
-    logger.log("Client connected!");
-    logger.flush();
+    logger.log("Client connected");
 
     let payload;
     try {
-        payload = bl_read_payload_from_socket(client_sock, MAX_PAYLOAD_SIZE);
+        payload = bl_read_payload_from_socket(Number(client_sock), MAX_PAYLOAD_SIZE);
     } catch (e) {
         logger.log("ERROR reading payload: " + e.message);
-        syscall(SYSCALL.close, client_sock);
-        syscall(SYSCALL.close, server_sock);
+        syscall(BigInt(BL_SYSCALL.close), client_sock);
+        syscall(BigInt(BL_SYSCALL.close), server_sock);
         return false;
     }
 
-    logger.log("Received " + payload.size + " bytes");
-    syscall(SYSCALL.close, client_sock);
-    syscall(SYSCALL.close, server_sock);
+    logger.log("Received " + payload.size + " bytes total");
+
+    syscall(BigInt(BL_SYSCALL.close), client_sock);
+    syscall(BigInt(BL_SYSCALL.close), server_sock);
 
     if (payload.size < 64) {
         logger.log("ERROR: Payload too small");
         return false;
     }
 
-    // Parse and load ELF
-    const elf_info = bl_load_elf(payload.buf, payload.size);
-
-    let mmap_size, mmap_base, entry_point;
-
-    if (elf_info.is_elf) {
-        mmap_size = Math.max(elf_info.total_size, payload.size);
-        mmap_size = ((mmap_size + 0xfff) & ~0xfff);  // Round to page
-
-        logger.log("Allocating " + mmap_size + " bytes RWX...");
-        mmap_base = bl_mmap_rwx(mmap_size);
-        logger.log("mmap() at: " + hex(mmap_base));
-
-        entry_point = bl_load_segments(payload.buf, elf_info, mmap_base);
-    } else {
-        // Raw shellcode - allocate RWX memory directly (kpatches enable this)
-        mmap_size = ((payload.size + 0xfff) & ~0xfff);
-        logger.log("Allocating " + mmap_size + " bytes RWX...");
-        mmap_base = bl_mmap_rwx(mmap_size);
-        logger.log("RWX memory at: " + hex(mmap_base));
-
-        // Copy raw shellcode
-        logger.log("Copying " + payload.size + " bytes...");
-        for (let i = 0; i < payload.size; i++) {
-            const byte = read8_uncompressed(payload.buf + BigInt(i));
-            write8_uncompressed(mmap_base + BigInt(i), byte);
-        }
-
-        // Entry point is start of shellcode
-        entry_point = mmap_base;
-    }
-
-    logger.log("Entry point: " + hex(entry_point));
-    logger.log("");
-    logger.log("Payload loaded! Spawning thread...");
-    logger.flush();
-
-    // Use call() for Thrd_create (simpler, worked before)
     try {
-        const THRD_CREATE_OFFSET = 0x4c770n;
-        const Thrd_create = libc_base + THRD_CREATE_OFFSET;
-
-        logger.log("libc_base: " + hex(libc_base));
-        logger.log("Thrd_create: " + hex(Thrd_create));
-        logger.flush();
-
-        const thr_handle_addr = malloc(8);
-
-        // Raw shellcode - no args (like bin_loader.py)
-        logger.log("Calling Thrd_create(handle, entry)...");
-        logger.flush();
-
-        const ret = call(Thrd_create, thr_handle_addr, entry_point);
-        logger.log("Thrd_create returned: " + hex(ret));
-
-        if (ret !== 0n) {
-            logger.log("ERROR: Thrd_create failed");
-            return false;
-        }
-
-        const thr_handle = read64_uncompressed(thr_handle_addr);
-        logger.log("Thread handle: " + hex(thr_handle));
-        logger.flush();
-
-        send_notification("Payload spawned!");
-        logger.log("Thread spawned! Waiting with Thrd_join...");
-        logger.flush();
-
-        // Wait for payload using Thrd_join (like yarpe bin_loader.py)
-        const THRD_JOIN_OFFSET = 0x4c570n;
-        const Thrd_join = libc_base + THRD_JOIN_OFFSET;
-        logger.log("Thrd_join: " + hex(Thrd_join));
-
-        const join_ret = call(Thrd_join, thr_handle, 0n);
-        logger.log("Thrd_join returned: " + hex(join_ret));
-        logger.flush();
-
-        // Now kill
-        logger.log("Payload done, killing game...");
-        const pid = syscall(SYSCALL.getpid);
-        syscall(SYSCALL.kill, pid, 9n);
-
-        return true;
-
+        BinLoader.init(payload.buf, payload.size);
+        BinLoader.run();
+        logger.log("Payload spawned successfully");
     } catch (e) {
-        logger.log("ERROR spawning thread: " + e.message);
-        logger.log(e.stack);
+        logger.log("ERROR loading payload: " + e.message);
+        if (e.stack) logger.log(e.stack);
         return false;
     }
-}
 
-// === Execute ===
-bin_loader_main();
+    return true;
+}
+bin_loader_main()

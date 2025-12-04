@@ -413,6 +413,75 @@ function apply_kernel_patches(fw_version) {
         const kexec_result = syscall(SYSCALL.kexec, mapping_addr);
         logger.log("kexec returned: " + hex(kexec_result));
 
+        // === Verify 12.00 kernel patches ===
+        if (fw_version === "12.00" || fw_version === "12.02") {
+            logger.log("Verifying 12.00 kernel patches...");
+            let patch_errors = 0;
+
+            // Patch offsets and expected values for 12.00
+            const patches_to_verify = [
+                { off: 0x1b76a3n, exp: 0x04eb, name: "dlsym_check1", size: 2 },
+                { off: 0x1b76b3n, exp: 0x04eb, name: "dlsym_check2", size: 2 },
+                { off: 0x1b76d3n, exp: 0xe990, name: "dlsym_check3", size: 2 },
+                { off: 0x627af4n, exp: 0x00eb, name: "veriPatch", size: 2 },
+                { off: 0xacdn, exp: 0xeb, name: "bcopy", size: 1 },
+                { off: 0x2bd3cdn, exp: 0xeb, name: "bzero", size: 1 },
+                { off: 0x2bd411n, exp: 0xeb, name: "pagezero", size: 1 },
+                { off: 0x2bd48dn, exp: 0xeb, name: "memcpy", size: 1 },
+                { off: 0x2bd4d1n, exp: 0xeb, name: "pagecopy", size: 1 },
+                { off: 0x2bd67dn, exp: 0xeb, name: "copyin", size: 1 },
+                { off: 0x2bdb2dn, exp: 0xeb, name: "copyinstr", size: 1 },
+                { off: 0x2bdbfdn, exp: 0xeb, name: "copystr", size: 1 },
+                { off: 0x6283dfn, exp: 0x00eb, name: "sysVeri_suspend", size: 2 },
+                { off: 0x490n, exp: 0x00, name: "syscall_check", size: 4 },
+                { off: 0x4c2n, exp: 0xeb, name: "syscall_jmp1", size: 1 },
+                { off: 0x4b9n, exp: 0x00eb, name: "syscall_jmp2", size: 2 },
+                { off: 0x4b5n, exp: 0x00eb, name: "syscall_jmp3", size: 2 },
+                { off: 0x3914e6n, exp: 0xeb, name: "setuid", size: 1 },
+                { off: 0x2fc0ecn, exp: 0x04eb, name: "vm_map_protect", size: 2 },
+                { off: 0x1b7164n, exp: 0xe990, name: "dynlib_load_prx", size: 2 },
+                { off: 0x1fa71an, exp: 0x37, name: "mmap_rwx1", size: 1 },
+                { off: 0x1fa71dn, exp: 0x37, name: "mmap_rwx2", size: 1 },
+                { off: 0x1102d80n, exp: 0x02, name: "sysent11_narg", size: 4 },
+                { off: 0x1102dacn, exp: 0x01, name: "sysent11_thrcnt", size: 4 },
+            ];
+
+            for (const p of patches_to_verify) {
+                let actual;
+                if (p.size === 1) {
+                    actual = Number(kernel.read_byte(kernel.addr.base + p.off));
+                } else if (p.size === 2) {
+                    actual = Number(kernel.read_word(kernel.addr.base + p.off));
+                } else {
+                    actual = Number(kernel.read_dword(kernel.addr.base + p.off));
+                }
+
+                if (actual === p.exp) {
+                    logger.log("  [OK] " + p.name);
+                } else {
+                    logger.log("  [FAIL] " + p.name + ": expected " + hex(p.exp) + ", got " + hex(actual));
+                    patch_errors++;
+                }
+            }
+
+            // Special check for sysent[11] sy_call - should point to jmp [rsi] gadget
+            const sysent11_call = kernel.read_qword(kernel.addr.base + 0x1102d88n);
+            const expected_gadget = kernel.addr.base + 0x47b31n;
+            if (sysent11_call === expected_gadget) {
+                logger.log("  [OK] sysent11_call -> jmp_rsi @ " + hex(sysent11_call));
+            } else {
+                logger.log("  [FAIL] sysent11_call: expected " + hex(expected_gadget) + ", got " + hex(sysent11_call));
+                patch_errors++;
+            }
+
+            if (patch_errors === 0) {
+                logger.log("All 12.00 kernel patches verified OK!");
+            } else {
+                logger.log("[WARNING] " + patch_errors + " kernel patches failed!");
+            }
+            logger.flush();
+        }
+
         // Restore original sysent[661]
         logger.log("Restoring sysent[661]...");
         kernel.write_dword(sysent_661_addr, sy_narg);

