@@ -1,7 +1,5 @@
 # Netflix N Hack for PS4
 
-## **Currently only userland+lapse exploit. Binloader is WIP**
-
 > [!NOTE]
 > The PS4 version requires very specific circumstances to work. Workarounds are included below.
 
@@ -70,9 +68,10 @@ Then simply open Netflix on your PS4.
 (Exploit initialization takes ~30 seconds.)
 
 This will spawn the Remote JS payload server.
-Send payloads/lapse_ps4.js via netcat or any equivalent tool.
+Send `payloads/lapse_binloader.js` via netcat or any equivalent tool.
 
-Important Notes
+
+# Important Notes
 
 > [!NOTE]
 > You will not see any output while the exploit is executing.
