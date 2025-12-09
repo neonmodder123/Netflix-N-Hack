@@ -64,7 +64,22 @@ If you don't know if you have the license, you can still try flashing the extend
 > Extended Storage does not require an exact capacity beyond the minimum of 256GB. Meaning that if your drive is 256GB you can use the image. If your drive is 500GB you can use the image. Or if it is 1TB you can use the image and etc up to 8TB. But if it is 250GB you cannot use the image.**
 - The `.7z` download size is roughly ~**95-200 MB** and around 400MB unpacked.
 
-#### Moving the Netflix App to Internal Storage
+#### Step 3: Extract the ZIP Image
+- Extract the downloaded `.7z` file.
+- Inside, you will see a `.zip` image file.
+
+#### Step 4: Write the Image with balenaEtcher
+1. Connect your Drive to your computer (using a dock/enclosure or spare M.2 slot).
+2. Open **balenaEtcher**.
+3. Click **“Flash from file”** and select the extracted **`.zip`** image.
+4. Click **“Select target”** and choose your Drive.
+5. Click **“Flash!”** to start the process.
+
+> Etcher will appear stuck at **0%** for a while, then at **85-99%** for several minutes.
+> This is normal, let it finish without interruption!
+> If you encounter damaged image warnings, reboot your pc, redownload the image.
+
+#### Step 5: Moving the Netflix App to Internal Storage
 1. Go to Settings -> Storage -> Extended Storage -> Applications  -> [Press Options on controller] -> Move To System Storage
 2. Press X on the Netflix App to tick and select it. 
 3. Go to "Move" and press X.
@@ -84,13 +99,27 @@ If you don't know if you have the license, you can still try flashing the extend
   - NOTE: ** Extended Storage does not require an exact capacity beyond the minimum of 256GB. Meaning that if your drive is 256GB you can use the image. If your drive is 500GB you can use the image. Or if it is 1TB you can use the image and etc up to 8TB. But if it is 250GB you cannot use the image.**
 - The `.7z` download size is roughly ~**95-300 MB** and around 500MB unpacked.
 
-#### Moving the Netflix App to Internal Storage
+#### Step 3: Extract the ZIP Image
+- Extract the downloaded `.7z` file.
+- Inside, you will see a `.zip` image file.
+
+#### Step 4: Write the Image with balenaEtcher
+1. Connect your Drive to your computer (using a dock/enclosure or spare M.2 slot).
+2. Open **balenaEtcher**.
+3. Click **“Flash from file”** and select the extracted **`.zip`** image.
+4. Click **“Select target”** and choose your Drive.
+5. Click **“Flash!”** to start the process.
+
+> Etcher will appear stuck at **0%** for a while, then at **85-99%** for several minutes.
+> This is normal, let it finish without interruption!
+> If you encounter damaged image warnings, reboot your pc, redownload the image.
+
+#### Step 5: Moving the Netflix App to Internal Storage
 1. Go to Settings>Storage>USB Extended Storage>Games and Apps
 2. Press X to select the Netflix app.
 3. Go to "Select Items to Move" and press X.
 4. The Netflix app should be selected now go to "Move" and press X 
 5. Press OK on the prompt to move the app to internal storage. It will then move to internal storage and be usable for the exploit. Accessible from the Media tab of the XMB.
-
 
 
 ### M.2 Drive Setup (PCIe Gen 4 NVMe for PS5)
