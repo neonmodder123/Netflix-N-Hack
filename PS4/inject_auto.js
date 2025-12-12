@@ -39,6 +39,38 @@ const logger = {
 
         nrdp.gibbon.scene.widget = this.overlay;
 
+        // Title widget - large red "Netflix N Hack" (centered)
+        var title = nrdp.gibbon.makeWidget({
+            name: "title",
+            x: 440,
+            y: 300,
+            width: 400,
+            height: 80
+        });
+        title.text = {
+            contents: "Netflix N Hack",
+            size: 72,
+            color: { a: 255, r: 255, g: 0, b: 0 },
+            wrap: false
+        };
+        title.parent = this.overlay;
+
+        // Subtitle widget - for big_log (centered below title)
+        this.subtitle = nrdp.gibbon.makeWidget({
+            name: "subtitle",
+            x: 400,
+            y: 380,
+            width: 500,
+            height: 30
+        });
+        this.subtitle.text = {
+            contents: "",
+            size: 22,
+            color: { a: 255, r: 255, g: 100, b: 100 },
+            wrap: false
+        };
+        this.subtitle.parent = this.overlay;
+
         // Pre-create all text widgets once to avoid removal/recreation overhead
         for (var i = 0; i < this.maxLines; i++) {
             var w = nrdp.gibbon.makeWidget({
@@ -121,6 +153,16 @@ const logger = {
         }
         if (this.pendingRefresh) {
             this.refresh();
+        }
+    },
+    big_log(text) {
+        if (this.subtitle) {
+            this.subtitle.text = {
+                contents: text,
+                size: 22,
+                color: { a: 255, r: 255, g: 100, b: 100 },
+                wrap: false
+            };
         }
     }
 }
@@ -239,116 +281,104 @@ var add_rop_smash_sharedfunctioninfo = null;
 var add_rop_smash_code = null;
 var add_rop_smash_code_store = null;
 var real_rbp = null;
-class gadgets {
-    constructor() {
-        try {
-            switch (nrdp.version.nova.app_version) {
-                case 'Gemini-U6-2':         // EU 6.000
-                    /** Gadgets for Function Arguments **/
-                    this.pop_rax = 0x6c233n;
-                    this.pop_rdi = 0x1a729bn;
-                    this.pop_rsi = 0x14d8n;
-                    this.pop_rdx = 0x3ec42n;
-                    this.pop_rcx = 0x2485n;
-                    this.pop_r8 = 0x6c232n;
-                    this.pop_r9 = 0x66511bn;
-                    
-                    /** Other Gadgets **/
-                    this.pop_rbp = 0x79n;
-                    this.pop_rbx = 0x2e1ebn;
-                    this.pop_rsp = 0x1df1e1n;
-                    this.pop_rsp_pop_rbp = 0x17ecb4en;
-                    this.mov_qword_ptr_rdi_rax = 0x1dcba9n;
-                    break;
-                case 'Gemini-U5-18':        // US 5.000
-                    /** Gadgets for Function Arguments **/
-                    this.pop_rax = 0x6c233n;
-                    this.pop_rdi = 0x24f3c2n; // Changed
-                    this.pop_rsi = 0x14d8n;
-                    this.pop_rdx = 0x3ec42n;
-                    this.pop_rcx = 0x2485n;
-                    this.pop_r8 = 0x6c232n;
-                    this.pop_r9 = 0x66511bn;
-                    
-                    /** Other Gadgets **/
-                    this.pop_rbp = 0x79n;
-                    this.pop_rbx = 0x2e1ebn;
-                    this.pop_rsp = 0x13c719n; // Changed
-                    this.pop_rsp_pop_rbp = 0x17ecb4en;
-                    this.mov_qword_ptr_rdi_rax = 0x1dcba9n;
-                    break;
-                case 'Pollux-U53-7-J':    
-                case 'Pollux-U53-7-E':        // PS4 EU 1.53
-                    is_ps4 = true;
-                    /** Gadgets for Function Arguments (EBOOT) **/
-                    this.pop_rax = 0x118dn;
-                    this.pop_rdi = 0xe333n;
-                    this.pop_rsi = 0x264en;
-                    this.pop_rdx = 0x5ff5cfn;
-                    this.pop_rcx = 0x18a7n;
-                    this.pop_r8 = 0x118cn;
-                    this.pop_r9 = 0x7416n;
-                    
-                    /** Other Gadgets **/
-                    this.pop_rbp = 0x79n;
-                    this.pop_rbx = 0x2666n;
-                    this.pop_rsp = 0x569bn;
-                    this.pop_rsp_pop_rbp = 0x60a30n;
-                    this.mov_qword_ptr_rsi_rax = 0x2e93c1n;// mov qword ptr [rsi], rax ; ret
-                    this.mov_qword_ptr_rdi_rdx = 0x7b83a9n;
-                    this.mov_qword_ptr_rdi_rax = 0x5113c9n;
-                    this.ret = 0x42n;
-                    //this.syscall = 0x1f4dcc5n;
+function gadgets() {
+    try {
+        switch (nrdp.version.nova.app_version) {
+            case 'Gemini-U6-2':         // EU 6.000
+                /** Gadgets for Function Arguments **/
+                this.pop_rax = 0x6c233n;
+                this.pop_rdi = 0x1a729bn;
+                this.pop_rsi = 0x14d8n;
+                this.pop_rdx = 0x3ec42n;
+                this.pop_rcx = 0x2485n;
+                this.pop_r8 = 0x6c232n;
+                this.pop_r9 = 0x66511bn;
 
-                    //this.mov_qword_ptr_rdi_rax = 0x5153c9n;  
-                        
-                
-                    break;
-                    
-                case 'Pollux-U53-7-A':        // PS4 US 1.53
-                    is_ps4 = true;
-                    is_us = true;
-                    /** Gadgets for Function Arguments (EBOOT) **/
-                    this.pop_rax = 0x118dn;
-                    this.pop_rdi = 0xe333n;
-                    this.pop_rsi = 0x264en;
-                    this.pop_rdx = 0x136c32n;  // changed
-                    this.pop_rcx = 0x18a7n;
-                    this.pop_r8 = 0x118cn;
-                    this.pop_r9 = 0x7416n;
-                    
-                    /** Other Gadgets **/
-                    this.pop_rbp = 0x79n;
-                    this.pop_rbx = 0x2666n;
-                    this.pop_rsp = 0x569bn;
-                    this.pop_rsp_pop_rbp = 0xcbd10n; //changed
-                    this.mov_qword_ptr_rsi_rax = 0x3546a1n;//changed
-                    this.mov_qword_ptr_rdi_rdx = 0x8236c5n;//changed
-                    this.mov_qword_ptr_rdi_rax = 0x57c74dn;//changed
-                    this.ret = 0x42n;
-                    //this.syscall = 0x1f4dcc5n;
+                /** Other Gadgets **/
+                this.pop_rbp = 0x79n;
+                this.pop_rbx = 0x2e1ebn;
+                this.pop_rsp = 0x1df1e1n;
+                this.pop_rsp_pop_rbp = 0x17ecb4en;
+                this.mov_qword_ptr_rdi_rax = 0x1dcba9n;
+                break;
+            case 'Gemini-U5-18':        // US 5.000
+                /** Gadgets for Function Arguments **/
+                this.pop_rax = 0x6c233n;
+                this.pop_rdi = 0x24f3c2n; // Changed
+                this.pop_rsi = 0x14d8n;
+                this.pop_rdx = 0x3ec42n;
+                this.pop_rcx = 0x2485n;
+                this.pop_r8 = 0x6c232n;
+                this.pop_r9 = 0x66511bn;
 
-                    //this.mov_qword_ptr_rdi_rax = 0x5153c9n;  
-                        
-                
-                    break;
-                default:
-                    throw new Error("App version not supported: " + nrdp.version.nova.app_version);
-            }
-        }
-        catch (e) {
-            throw new Error("App version not supported : " + e);
+                /** Other Gadgets **/
+                this.pop_rbp = 0x79n;
+                this.pop_rbx = 0x2e1ebn;
+                this.pop_rsp = 0x13c719n; // Changed
+                this.pop_rsp_pop_rbp = 0x17ecb4en;
+                this.mov_qword_ptr_rdi_rax = 0x1dcba9n;
+                break;
+            case 'Pollux-U53-7-J':
+            case 'Pollux-U53-7-E':        // PS4 EU 1.53
+                is_ps4 = true;
+                /** Gadgets for Function Arguments (EBOOT) **/
+                this.pop_rax = 0x118dn;
+                this.pop_rdi = 0xe333n;
+                this.pop_rsi = 0x264en;
+                this.pop_rdx = 0x5ff5cfn;
+                this.pop_rcx = 0x18a7n;
+                this.pop_r8 = 0x118cn;
+                this.pop_r9 = 0x7416n;
+
+                /** Other Gadgets **/
+                this.pop_rbp = 0x79n;
+                this.pop_rbx = 0x2666n;
+                this.pop_rsp = 0x569bn;
+                this.pop_rsp_pop_rbp = 0x60a30n;
+                this.mov_qword_ptr_rsi_rax = 0x2e93c1n;// mov qword ptr [rsi], rax ; ret
+                this.mov_qword_ptr_rdi_rdx = 0x7b83a9n;
+                this.mov_qword_ptr_rdi_rax = 0x5113c9n;
+                this.ret = 0x42n;
+                break;
+
+            case 'Pollux-U53-7-A':        // PS4 US 1.53
+                is_ps4 = true;
+                is_us = true;
+                /** Gadgets for Function Arguments (EBOOT) **/
+                this.pop_rax = 0x118dn;
+                this.pop_rdi = 0xe333n;
+                this.pop_rsi = 0x264en;
+                this.pop_rdx = 0x136c32n;  // changed
+                this.pop_rcx = 0x18a7n;
+                this.pop_r8 = 0x118cn;
+                this.pop_r9 = 0x7416n;
+
+                /** Other Gadgets **/
+                this.pop_rbp = 0x79n;
+                this.pop_rbx = 0x2666n;
+                this.pop_rsp = 0x569bn;
+                this.pop_rsp_pop_rbp = 0xcbd10n; //changed
+                this.mov_qword_ptr_rsi_rax = 0x3546a1n;//changed
+                this.mov_qword_ptr_rdi_rdx = 0x8236c5n;//changed
+                this.mov_qword_ptr_rdi_rax = 0x57c74dn;//changed
+                this.ret = 0x42n;
+                break;
+            default:
+                throw new Error("App version not supported: " + nrdp.version.nova.app_version);
         }
     }
-
-    get(gadget) {
-        const addr = this[gadget];
-        if (addr === undefined) {
-            throw new Error("Gadget not found: " + gadget);
-        }
-        return eboot_base + addr;
+    catch (e) {
+        throw new Error("App version not supported : " + e);
     }
 }
+
+gadgets.prototype.get = function(gadget) {
+    var addr = this[gadget];
+    if (addr === undefined) {
+        throw new Error("Gadget not found: " + gadget);
+    }
+    return eboot_base + addr;
+};
 
 function stringToBytes (str) {
   const len = str.length;
@@ -419,6 +449,13 @@ function main () {
     try {
 
         g = new gadgets(); // Load gadgets (make it global for payloads)
+        if (g === undefined || g === null) {
+            throw new Error("gadgets failed to initialize - g is " + (g === null ? "null" : "undefined"));
+        }
+        if (g.pop_rsp === undefined) {
+            throw new Error("gadgets missing pop_rsp - app version: " + nrdp.version.nova.app_version);
+        }
+        (0, eval)('this').g = g; // Expose on global object for strict mode eval
 
         let hole = make_hole();
 
@@ -1394,6 +1431,7 @@ function main () {
 // ===== LAPSE_BINLOADER_PAYLOAD_END =====
 
     } catch (e) {
+        logger.big_log("Press X/O")
         logger.log("EXCEPTION: " + e.message);
         logger.log(e.stack);
         logger.flush();

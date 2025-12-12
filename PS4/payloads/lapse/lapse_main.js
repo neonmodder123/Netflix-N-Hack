@@ -8,6 +8,48 @@
 // === Main Execution ===
 
 (function() {
+    // Cleanup function - closes exploit resources
+    function cleanup() {
+        logger.log("Cleaning up exploit resources...");
+
+        // Close block/unblock socket pair
+        if (typeof block_fd !== 'undefined' && block_fd !== 0xffffffffffffffffn) {
+            syscall(SYSCALL.close, block_fd);
+        }
+        if (typeof unblock_fd !== 'undefined' && unblock_fd !== 0xffffffffffffffffn) {
+            syscall(SYSCALL.close, unblock_fd);
+        }
+
+        // Close all sds sockets
+        if (typeof sds !== 'undefined' && sds !== null) {
+            for (let i = 0; i < sds.length; i++) {
+                if (sds[i] !== 0xffffffffffffffffn) {
+                    syscall(SYSCALL.close, sds[i]);
+                }
+            }
+        }
+
+        // Close all sds_alt sockets
+        if (typeof sds_alt !== 'undefined' && sds_alt !== null) {
+            for (let i = 0; i < sds_alt.length; i++) {
+                if (sds_alt[i] !== 0xffffffffffffffffn) {
+                    syscall(SYSCALL.close, sds_alt[i]);
+                }
+            }
+        }
+
+        // Restore CPU core and rtprio
+        if (typeof prev_core !== 'undefined' && prev_core !== -1) {
+            pin_to_core(prev_core);
+        }
+        if (typeof prev_rtprio !== 'undefined' && prev_rtprio !== 0n) {
+            set_rtprio(prev_rtprio);
+        }
+
+        logger.log("Exploit cleanup complete");
+        logger.flush();
+    }
+
     try {
         logger.log("=== PS4 Lapse Jailbreak ===");
         logger.flush();
@@ -39,6 +81,7 @@
         if (!setup_success) {
             logger.log("Setup failed");
             send_notification("Lapse Failed\nReboot and try again");
+            cleanup();
             return;
         }
         logger.log("Setup completed");
@@ -53,6 +96,7 @@
         if (sd_pair === null) {
             logger.log("[FAILED] Stage 1");
             send_notification("Lapse Failed\nReboot and try again");
+            cleanup();
             return;
         }
         logger.log("[OK] Stage 1: " + stage1_time + "ms");
@@ -67,6 +111,7 @@
         if (leak_result === null) {
             logger.log("[FAILED] Stage 2");
             send_notification("Lapse Failed\nReboot and try again");
+            cleanup();
             return;
         }
         logger.log("[OK] Stage 2: " + stage2_time + "ms");
@@ -91,6 +136,7 @@
         if (pktopts_sds === null) {
             logger.log("[FAILED] Stage 3");
             send_notification("Lapse Failed\nReboot and try again");
+            cleanup();
             return;
         }
         logger.log("[OK] Stage 3: " + stage3_time + "ms");
@@ -112,6 +158,7 @@
         if (arw_result === null) {
             logger.log("[FAILED] Stage 4");
             send_notification("Lapse Failed\nReboot and try again");
+            cleanup();
             return;
         }
         logger.log("[OK] Stage 4: " + stage4_time + "ms");
@@ -234,48 +281,10 @@
         logger.log(e.stack);
         logger.flush();
         send_notification("Lapse Failed\nReboot and try again");
+        cleanup();
+        return;
     }
 
-    // =========================================================
-    // Cleanup: Close exploit resources (like yarpe's finally block)
-    // This is critical for Netflix to exit cleanly
-    // =========================================================
-    logger.log("Cleaning up exploit resources...");
-
-    // Close block/unblock socket pair
-    if (block_fd !== 0xffffffffffffffffn) {
-        syscall(SYSCALL.close, block_fd);
-    }
-    if (unblock_fd !== 0xffffffffffffffffn) {
-        syscall(SYSCALL.close, unblock_fd);
-    }
-
-    // Close all sds sockets
-    if (sds !== null) {
-        for (let i = 0; i < sds.length; i++) {
-            if (sds[i] !== 0xffffffffffffffffn) {
-                syscall(SYSCALL.close, sds[i]);
-            }
-        }
-    }
-
-    // Close all sds_alt sockets
-    if (sds_alt !== null) {
-        for (let i = 0; i < sds_alt.length; i++) {
-            if (sds_alt[i] !== 0xffffffffffffffffn) {
-                syscall(SYSCALL.close, sds_alt[i]);
-            }
-        }
-    }
-
-    // Restore CPU core and rtprio
-    if (prev_core !== -1) {
-        pin_to_core(prev_core);
-    }
-    if (prev_rtprio !== 0n) {
-        set_rtprio(prev_rtprio);
-    }
-
-    logger.log("Exploit cleanup complete");
-    logger.flush();
+    // Cleanup on success too
+    cleanup();
 })();

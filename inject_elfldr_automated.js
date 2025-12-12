@@ -5,6 +5,8 @@
 const ip_script = ""; // ip address of your computer running mitmproxy, MITM Proxy is handling it --> Needs to be updated
 const ip_script_port = 8080; //port that mitmproxy is on
 
+var is_ps4 = false; // Flag to stop execution after PS4 exploit loads
+
 // #region misc
 
 let SYSCALL = {
@@ -204,6 +206,38 @@ const logger = {
 
         nrdp.gibbon.scene.widget = this.overlay;
 
+        // Title widget - large red "Netflix N Hack" (centered)
+        var title = nrdp.gibbon.makeWidget({
+            name: "title",
+            x: 380,
+            y: 300,
+            width: 500,
+            height: 100
+        });
+        title.text = {
+            contents: "Netflix N Hack",
+            size: 72,
+            color: { a: 255, r: 255, g: 0, b: 0 },
+            wrap: false
+        };
+        title.parent = this.overlay;
+
+        // Subtitle widget - shown for PS4 (centered below title)
+        this.subtitle = nrdp.gibbon.makeWidget({
+            name: "subtitle",
+            x: 400,
+            y: 420,
+            width: 500,
+            height: 30
+        });
+        this.subtitle.text = {
+            contents: "",
+            size: 22,
+            color: { a: 255, r: 255, g: 100, b: 100 },
+            wrap: false
+        };
+        this.subtitle.parent = this.overlay;
+
         // Pre-create all text widgets once to avoid removal/recreation overhead
         for (var i = 0; i < this.maxLines; i++) {
             var w = nrdp.gibbon.makeWidget({
@@ -286,6 +320,16 @@ const logger = {
         }
         if (this.pendingRefresh) {
             this.refresh();
+        }
+    },
+    setSubtitle(text) {
+        if (this.subtitle) {
+            this.subtitle.text = {
+                contents: text,
+                size: 20,
+                color: { a: 255, r: 255, g: 100, b: 100 },
+                wrap: false
+            };
         }
     }
 }
@@ -467,9 +511,9 @@ class gadgets {
                         logger.flush();
                     }
                 });
-                logger.log("PS4 Detected! loading exploit...");
-                //throw new Error("hi");
-                break;
+                logger.setSubtitle("PS4 Detected, Loading Exploit...");
+                is_ps4 = true;
+                return; // Exit constructor, main() will check is_ps4 and return
             default:
                 
                 throw new Error("App version not supported");
@@ -550,6 +594,7 @@ function main () {
     try {
         hook_tryagain();
         const g = new gadgets(); // Load gadgets
+        if (is_ps4) return; // PS4 exploit loaded separately, stop here
 
         let hole = make_hole();
 

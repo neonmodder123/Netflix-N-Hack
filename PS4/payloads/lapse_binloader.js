@@ -2495,6 +2495,48 @@ function make_kernel_arw(pktopts_sds, reqs1_addr, kernel_addr, sds, sds_alt, aio
 // === Main Execution ===
 
 (function() {
+    // Cleanup function - closes exploit resources
+    function cleanup() {
+        logger.log("Cleaning up exploit resources...");
+
+        // Close block/unblock socket pair
+        if (typeof block_fd !== 'undefined' && block_fd !== 0xffffffffffffffffn) {
+            syscall(SYSCALL.close, block_fd);
+        }
+        if (typeof unblock_fd !== 'undefined' && unblock_fd !== 0xffffffffffffffffn) {
+            syscall(SYSCALL.close, unblock_fd);
+        }
+
+        // Close all sds sockets
+        if (typeof sds !== 'undefined' && sds !== null) {
+            for (let i = 0; i < sds.length; i++) {
+                if (sds[i] !== 0xffffffffffffffffn) {
+                    syscall(SYSCALL.close, sds[i]);
+                }
+            }
+        }
+
+        // Close all sds_alt sockets
+        if (typeof sds_alt !== 'undefined' && sds_alt !== null) {
+            for (let i = 0; i < sds_alt.length; i++) {
+                if (sds_alt[i] !== 0xffffffffffffffffn) {
+                    syscall(SYSCALL.close, sds_alt[i]);
+                }
+            }
+        }
+
+        // Restore CPU core and rtprio
+        if (typeof prev_core !== 'undefined' && prev_core !== -1) {
+            pin_to_core(prev_core);
+        }
+        if (typeof prev_rtprio !== 'undefined' && prev_rtprio !== 0n) {
+            set_rtprio(prev_rtprio);
+        }
+
+        logger.log("Exploit cleanup complete");
+        logger.flush();
+    }
+
     try {
         logger.log("=== PS4 Lapse Jailbreak ===");
         logger.flush();
@@ -2526,6 +2568,7 @@ function make_kernel_arw(pktopts_sds, reqs1_addr, kernel_addr, sds, sds_alt, aio
         if (!setup_success) {
             logger.log("Setup failed");
             send_notification("Lapse Failed\nReboot and try again");
+            cleanup();
             return;
         }
         logger.log("Setup completed");
@@ -2540,6 +2583,7 @@ function make_kernel_arw(pktopts_sds, reqs1_addr, kernel_addr, sds, sds_alt, aio
         if (sd_pair === null) {
             logger.log("[FAILED] Stage 1");
             send_notification("Lapse Failed\nReboot and try again");
+            cleanup();
             return;
         }
         logger.log("[OK] Stage 1: " + stage1_time + "ms");
@@ -2554,6 +2598,7 @@ function make_kernel_arw(pktopts_sds, reqs1_addr, kernel_addr, sds, sds_alt, aio
         if (leak_result === null) {
             logger.log("[FAILED] Stage 2");
             send_notification("Lapse Failed\nReboot and try again");
+            cleanup();
             return;
         }
         logger.log("[OK] Stage 2: " + stage2_time + "ms");
@@ -2578,6 +2623,7 @@ function make_kernel_arw(pktopts_sds, reqs1_addr, kernel_addr, sds, sds_alt, aio
         if (pktopts_sds === null) {
             logger.log("[FAILED] Stage 3");
             send_notification("Lapse Failed\nReboot and try again");
+            cleanup();
             return;
         }
         logger.log("[OK] Stage 3: " + stage3_time + "ms");
@@ -2599,6 +2645,7 @@ function make_kernel_arw(pktopts_sds, reqs1_addr, kernel_addr, sds, sds_alt, aio
         if (arw_result === null) {
             logger.log("[FAILED] Stage 4");
             send_notification("Lapse Failed\nReboot and try again");
+            cleanup();
             return;
         }
         logger.log("[OK] Stage 4: " + stage4_time + "ms");
@@ -2721,50 +2768,12 @@ function make_kernel_arw(pktopts_sds, reqs1_addr, kernel_addr, sds, sds_alt, aio
         logger.log(e.stack);
         logger.flush();
         send_notification("Lapse Failed\nReboot and try again");
+        cleanup();
+        return;
     }
 
-    // =========================================================
-    // Cleanup: Close exploit resources (like yarpe's finally block)
-    // This is critical for Netflix to exit cleanly
-    // =========================================================
-    logger.log("Cleaning up exploit resources...");
-
-    // Close block/unblock socket pair
-    if (block_fd !== 0xffffffffffffffffn) {
-        syscall(SYSCALL.close, block_fd);
-    }
-    if (unblock_fd !== 0xffffffffffffffffn) {
-        syscall(SYSCALL.close, unblock_fd);
-    }
-
-    // Close all sds sockets
-    if (sds !== null) {
-        for (let i = 0; i < sds.length; i++) {
-            if (sds[i] !== 0xffffffffffffffffn) {
-                syscall(SYSCALL.close, sds[i]);
-            }
-        }
-    }
-
-    // Close all sds_alt sockets
-    if (sds_alt !== null) {
-        for (let i = 0; i < sds_alt.length; i++) {
-            if (sds_alt[i] !== 0xffffffffffffffffn) {
-                syscall(SYSCALL.close, sds_alt[i]);
-            }
-        }
-    }
-
-    // Restore CPU core and rtprio
-    if (prev_core !== -1) {
-        pin_to_core(prev_core);
-    }
-    if (prev_rtprio !== 0n) {
-        set_rtprio(prev_rtprio);
-    }
-
-    logger.log("Exploit cleanup complete");
-    logger.flush();
+    // Cleanup on success too
+    cleanup();
 })();
 
 
@@ -2775,7 +2784,7 @@ function make_kernel_arw(pktopts_sds, reqs1_addr, kernel_addr, sds, sds_alt, aio
 // Loads and executes ELF binaries sent over socket after jailbreak is complete
 
 // Constants
-const BIN_LOADER_PORT = 9021;
+const BIN_LOADER_PORT = 9020;
 const MAX_PAYLOAD_SIZE = 4 * 1024 * 1024;  // 4MB max
 const READ_CHUNK = 32768;  // 32KB chunks for faster transfer
 
